@@ -30,6 +30,7 @@
 #include "Account.h"
 #include "Transaction.h"
 #include "ThreadPool.h"
+#include "BoundedQueue.h"
 
 // ── Terminal colors ──────────────────────────────────────────
 #define RESET   "\033[0m"
@@ -60,7 +61,7 @@ void printHeader() {
     std::cout << CLEAR << BOLD << CYAN;
     std::cout << "╔══════════════════════════════════════════════════════════════╗\n";
     std::cout << "║        BANKING TRANSACTION PROCESSING SYSTEM                ║\n";
-    std::cout << "║        Week 1 + Week 2  |  8 OS Concepts                   ║\n";
+    std::cout << "║        Week 1 + 2 + 3  |  11 OS Concepts                   ║\n";
     std::cout << "╚══════════════════════════════════════════════════════════════╝\n";
     std::cout << RESET << "\n";
 }
@@ -185,7 +186,7 @@ void demoDeadlock(std::vector<std::shared_ptr<Account>>& accounts,
     ThreadPool tp(4);
     g_success = 0; g_failed = 0;
 
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 50; i++) {
         if (i % 2 == 0) {
             tp.enqueue([&]() {
                 Transaction t(i, TxType::TRANSFER, accounts[0], accounts[1], 100.0, &pool);
@@ -220,16 +221,16 @@ void demoMutex(std::vector<std::shared_ptr<Account>>& accounts,
     printSection("DEMO 4: MUTEX — RACE CONDITION PREVENTION  (Week 1)");
 
     double before = accounts[2]->getBalance();
-    std::cout << "\n  100 threads each deposit $10 to ACC-003 simultaneously\n";
+    std::cout << "\n  50 threads each deposit $10 to ACC-003 simultaneously\n";
     std::cout << "  Without mutex : threads overwrite each other (wrong total)\n";
     std::cout << "  With mutex    : each waits its turn (correct total)\n\n";
     std::cout << "  Balance before : $" << std::fixed << std::setprecision(2) << before << "\n";
-    std::cout << "  Expected after : $" << (before + 1000.0) << "\n\n";
+    std::cout << "  Expected after : $" << (before + 500.0) << "\n\n";
 
     ThreadPool tp(8);
     std::atomic<int> done{0};
 
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 50; i++) {
         tp.enqueue([&]() {
             Transaction t(i, TxType::DEPOSIT, nullptr, accounts[2], 10.0, &pool);
             t.execute();
@@ -242,7 +243,7 @@ void demoMutex(std::vector<std::shared_ptr<Account>>& accounts,
     double after = accounts[2]->getBalance();
     std::cout << "  Balance after  : $" << after << "\n";
 
-    if (std::abs(after - (before + 1000.0)) < 0.01)
+    if (std::abs(after - (before + 500.0)) < 0.01)
         std::cout << GREEN << "  ✓ CORRECT — mutex prevented all race conditions\n" << RESET;
     else
         std::cout << RED << "  ✗ Race condition — expected $"
@@ -255,9 +256,104 @@ void demoMutex(std::vector<std::shared_ptr<Account>>& accounts,
 // ─────────────────────────────────────────────────────────────
 //  DEMO 5 — Full Stress Test with live terminal dashboard
 // ─────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────
+//  DEMO 5 — Producer-Consumer with Bounded Queue (Week 3)
+// ─────────────────────────────────────────────────────────────
+void demoProducerConsumer(std::vector<std::shared_ptr<Account>>& accounts,
+                           ConnectionPool& pool) {
+    printSection("DEMO 5: PRODUCER-CONSUMER  (Week 3)");
+
+    const int QUEUE_SIZE   = 8;
+    const int TOTAL        = 24;  // 3 producers x 8 each
+
+    std::cout << "\n  Bounded Queue capacity : " << QUEUE_SIZE << " slots\n";
+    std::cout << "  Producers              : 3 (ATM, MOBILE, WEB)\n";
+    std::cout << "  Consumers              : 3 worker threads\n";
+    std::cout << "  Total requests         : " << TOTAL << "\n\n";
+    std::cout << "  When queue fills → producers BLOCK (sem_wait empty_slots)\n";
+    std::cout << "  When queue empty → consumers BLOCK (sem_wait full_slots)\n\n";
+
+    BoundedQueue bq(QUEUE_SIZE);
+    std::atomic<int> consumed{0};
+    std::atomic<bool> done_producing{false};
+    std::mutex result_mutex;
+    int cons_success = 0, cons_failed = 0;
+
+    std::vector<std::string> channels = {"ATM", "MOBILE", "WEB"};
+    std::vector<std::string> accs = {"ACC-001","ACC-002","ACC-003","ACC-004","ACC-005"};
+
+    // Consumers
+    std::vector<std::thread> consumers;
+    for (int c = 0; c < 3; c++) {
+        consumers.emplace_back([&, c]() {
+            while (true) {
+                TransactionRequest req;
+                if (!bq.tryConsume(req)) {
+                    if (done_producing && bq.getCurrentSize() == 0) break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    continue;
+                }
+                int to_idx = -1, from_idx = -1;
+                for (int i = 0; i < (int)accounts.size(); i++) {
+                    if (accounts[i]->getAccountNumber() == req.to_acc)   to_idx   = i;
+                    if (accounts[i]->getAccountNumber() == req.from_acc) from_idx = i;
+                }
+                bool ok = false;
+                if (req.type == "DEPOSIT" && to_idx >= 0) {
+                    Transaction t(req.id, TxType::DEPOSIT, nullptr, accounts[to_idx], req.amount, &pool);
+                    ok = t.execute();
+                } else if (req.type == "TRANSFER" && from_idx >= 0 && to_idx >= 0) {
+                    Transaction t(req.id, TxType::TRANSFER, accounts[from_idx], accounts[to_idx], req.amount, &pool);
+                    ok = t.execute();
+                }
+                { std::lock_guard<std::mutex> lk(result_mutex);
+                  if (ok) cons_success++; else cons_failed++; }
+                consumed++;
+                std::cout << "  [Consumer-" << c << "] " << req.channel
+                          << " " << req.type << " $" << req.amount
+                          << (ok ? GREEN " OK" RESET : RED " FAIL" RESET) << "\n";
+            }
+        });
+    }
+
+    // Producers
+    std::vector<std::thread> producers;
+    for (int p = 0; p < 3; p++) {
+        producers.emplace_back([&, p]() {
+            for (int i = 0; i < 8; i++) {
+                TransactionRequest req;
+                req.id       = p * 100 + i;
+                req.channel  = channels[p];
+                req.type     = (i % 2 == 0) ? "DEPOSIT" : "TRANSFER";
+                req.from_acc = accs[i % accs.size()];
+                req.to_acc   = accs[(i+1) % accs.size()];
+                req.amount   = 50.0 + (i % 4) * 25.0;
+                std::cout << "  [" << channels[p] << "] -> queue size:"
+                          << bq.getCurrentSize() << "/" << QUEUE_SIZE << "\n";
+                bq.produce(req);
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+        });
+    }
+
+    for (auto& p : producers) p.join();
+    done_producing = true;
+    for (int w = 0; w < 500 && consumed < TOTAL; w++)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    for (auto& c : consumers) if (c.joinable()) c.detach();
+
+    bq.printStats();
+    std::cout << GREEN << "\n  Producer-Consumer complete! "
+              << "Processed: " << consumed << "\n" << RESET;
+    showBalances(accounts);
+    std::cout << "\n  Press Enter to continue...";
+    std::cin.get();
+}
+
 void demoStressTest(std::vector<std::shared_ptr<Account>>& accounts,
                     ConnectionPool& pool) {
-    printSection("DEMO 5: FULL STRESS TEST  (200 transactions, live view)");
+    printSection("DEMO 6: FULL STRESS TEST  (200 transactions, live view)");
 
     const int TOTAL = 200;
     g_success = 0; g_failed = 0;
@@ -338,7 +434,7 @@ void demoStressTest(std::vector<std::shared_ptr<Account>>& accounts,
 //  SUMMARY
 // ─────────────────────────────────────────────────────────────
 void printSummary(ConnectionPool& pool) {
-    printSection("OS CONCEPTS SUMMARY  —  Week 1 + Week 2");
+    printSection("OS CONCEPTS SUMMARY  —  Week 1 + 2 + 3");
 
     std::cout << "\n  Week 1:\n";
     std::cout << "  " << GREEN << "✓" << RESET << " Threads            — " << 4 << " worker threads in ThreadPool\n";
@@ -353,12 +449,17 @@ void printSummary(ConnectionPool& pool) {
     std::cout << "  " << CYAN << "✓" << RESET << " IPC Foundation     — shared pool resource across threads\n";
     std::cout << "  " << CYAN << "✓" << RESET << " Persistence        — MySQL saves all state across restarts\n";
 
-    std::cout << "\n  " << BOLD << "Total: 8 OS concepts active\n" << RESET;
+    std::cout << "\n  " << BOLD << "Total: 11 OS concepts active\n" << RESET;
 
     pool.printStats();
 
     std::cout << "\n" << BOLD << YELLOW
-              << "  Next → Week 3: Producer-Consumer (bounded queue)\n"
+              << "  Week 3:
+  ✓ Producer-Consumer  — ATM/Mobile/Web produce, workers consume
+  ✓ Bounded Buffer     — fixed queue prevents memory overflow
+  ✓ Dual Semaphores    — empty_slots + full_slots coordination
+
+  Next → Week 4: Readers-Writers Problem\n"
               << RESET << "\n";
 }
 
@@ -389,6 +490,7 @@ int main() {
     demoSemaphore(pool);
     demoDeadlock(accounts, pool);
     demoMutex(accounts, pool);
+    demoProducerConsumer(accounts, pool);
     demoStressTest(accounts, pool);
     printSummary(pool);
 
