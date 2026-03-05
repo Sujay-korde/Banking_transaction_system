@@ -2,15 +2,11 @@
 #define ACCOUNT_H
 
 /*
- * Account — Week 1 + Week 2
- *
- * Week 1: in-memory balance, mutex protection
- * Week 2: every balance change persisted to MySQL via ConnectionPool
+ * Account — Week 1 + Week 2 + Week 3
  *
  * OS Concepts:
- *   MUTEX     — protects balance from race conditions (Week 1)
- *   SEMAPHORE — ConnectionPool uses sem_wait/sem_post to limit
- *               concurrent DB connections (Week 2)
+ *   MUTEX     — protects balance from race conditions
+ *   SEMAPHORE — ConnectionPool uses sem_wait/sem_post
  */
 
 #include <string>
@@ -26,10 +22,9 @@ private:
     std::string type;
     double      balance;
 
-    std::mutex  acc_mutex;    // OS: MUTEX — critical section guard
-    ConnectionPool* pool;     // OS: SEMAPHORE inside pool
+    std::mutex  acc_mutex;
+    ConnectionPool* pool;
 
-    // Save current balance to MySQL
     void persistBalance();
 
 public:
@@ -39,17 +34,27 @@ public:
             double initial_balance,
             ConnectionPool* pool);
 
+    // Thread-safe versions (acquire mutex internally)
     bool   deposit(double amount);
     bool   withdraw(double amount);
+
+    // Raw versions — NO mutex (caller must hold lock already)
+    // Used by Transaction::TRANSFER which locks via lockInOrder
+    void   depositRaw(double amount)  { balance += amount; }
+    bool   withdrawRaw(double amount) {
+        if (balance < amount) return false;
+        balance -= amount;
+        return true;
+    }
+
     double getBalance();
 
-    // Manual lock/unlock for deadlock prevention in transfers
     void lock()   { acc_mutex.lock(); }
     void unlock() { acc_mutex.unlock(); }
 
-    long        getId()           const { return id; }
-    std::string getAccountNumber()const { return account_number; }
-    std::string getType()         const { return type; }
+    long        getId()            const { return id; }
+    std::string getAccountNumber() const { return account_number; }
+    std::string getType()          const { return type; }
 
     void displayInfo();
 };

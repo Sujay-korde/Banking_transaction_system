@@ -26,6 +26,7 @@ add_executable(banking_system
     src/ThreadPool.cpp
     src/ConnectionPool.cpp
     src/DatabaseManager.cpp
+    src/BoundedQueue.cpp
 )
 
 target_include_directories(banking_system PRIVATE ${CMAKE_SOURCE_DIR}/src)

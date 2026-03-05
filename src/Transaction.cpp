@@ -1,8 +1,6 @@
 #include "Transaction.h"
 #include <iostream>
-#include <thread>
 
-// Global flag - set to false for fast demos, true for persistence demo
 bool DB_LOGGING_ENABLED = false;
 
 Transaction::Transaction(long id, TxType t,
@@ -31,61 +29,44 @@ std::string Transaction::typeStr(TxType t) {
 }
 
 bool Transaction::execute() {
-    auto start = std::chrono::high_resolution_clock::now();
-    int tid = (int)(std::hash<std::thread::id>{}(
-                    std::this_thread::get_id()) % 100000);
     bool ok = false;
 
-    // ── Execute transaction (always fast, in-memory) ──
     switch (type) {
         case TxType::DEPOSIT:
+            // deposit() acquires mutex internally — safe
             ok = to->deposit(amount);
             break;
 
         case TxType::WITHDRAW:
+            // withdraw() acquires mutex internally — safe
             ok = from->withdraw(amount);
             break;
 
         case TxType::TRANSFER:
             // OS: DEADLOCK PREVENTION
+            // lockInOrder acquires BOTH mutexes before we touch balances
+            // Then use Raw versions — NO mutex inside (we already hold it)
+            // This prevents double-lock deadlock
             lockInOrder(from.get(), to.get());
-            if (from->getBalance() >= amount) {
-                from->withdraw(amount);
-                to->deposit(amount);
-                ok = true;
-            }
+            ok = from->withdrawRaw(amount);  // No mutex — we hold it
+            if (ok) to->depositRaw(amount);  // No mutex — we hold it
             unlockBoth(from.get(), to.get());
             break;
     }
 
     status = ok ? TxStatus::SUCCESS : TxStatus::FAILED;
 
-    // ── DB logging only when enabled ──
-    // Disabled during speed demos, enabled for persistence demo
-    if (DB_LOGGING_ENABLED) {
-        auto end = std::chrono::high_resolution_clock::now();
-        int  ms  = (int)std::chrono::duration_cast<
-                        std::chrono::milliseconds>(end - start).count();
-
-        std::string from_acc   = from ? from->getAccountNumber() : "";
-        std::string to_acc_str = to   ? to->getAccountNumber()   : "";
-        std::string type_str   = typeStr(type);
-        std::string status_str = ok ? "SUCCESS" : "FAILED";
-        double amt = amount;
-        bool ok_copy = ok;
-
-        std::thread([this, from_acc, to_acc_str, type_str, amt,
-                     status_str, tid, ms, ok_copy]() {
-            try {
-                auto conn = pool->acquire();
-                long long lid = conn->logTransaction(
-                    from_acc, to_acc_str, type_str, amt,
-                    status_str, tid, ms
-                );
-                conn->logEvent(lid, ok_copy ? "Completed" : "Failed");
-                pool->release(conn);
-            } catch (...) {}
-        }).detach();
+    if (DB_LOGGING_ENABLED && pool != nullptr) {
+        try {
+            auto conn = pool->acquire();
+            conn->logTransaction(
+                from ? from->getAccountNumber() : "",
+                to   ? to->getAccountNumber()   : "",
+                typeStr(type), amount,
+                ok ? "SUCCESS" : "FAILED", 0, 0
+            );
+            pool->release(conn);
+        } catch (...) {}
     }
 
     return ok;

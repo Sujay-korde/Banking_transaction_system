@@ -2,7 +2,7 @@
 #define THREADPOOL_H
 
 /*
- * ThreadPool — Week 1 + Week 2
+ * ThreadPool — Week 1 + Week 2 + Week 3
  *
  * OS Concepts:
  *   THREADS           — pool of worker threads
@@ -26,22 +26,19 @@ private:
     std::vector<std::thread> workers;
     std::queue<std::function<void()>> tasks;
 
-    std::mutex q_mutex;               // OS: MUTEX
-    std::condition_variable cv;       // OS: CONDITION VARIABLE
+    std::mutex q_mutex;
+    std::condition_variable cv;
     std::atomic<bool> stop{false};
     std::atomic<int>  active{0};
     int num_threads;
 
 public:
     ThreadPool(int n = std::thread::hardware_concurrency()) : num_threads(n) {
-        std::cout << "[THREAD POOL] Starting " << n << " worker threads\n";
-
         for (int i = 0; i < n; i++) {
-            workers.emplace_back([this, i] {
+            workers.emplace_back([this] {
                 while (true) {
                     std::function<void()> task;
                     {
-                        // OS: SYNCHRONIZATION — wait for work
                         std::unique_lock<std::mutex> lock(q_mutex);
                         cv.wait(lock, [this] { return stop || !tasks.empty(); });
                         if (stop && tasks.empty()) return;
@@ -54,10 +51,8 @@ public:
                 }
             });
         }
-        std::cout << "[THREAD POOL] All " << n << " workers ready\n";
     }
 
-    // OS: PRODUCER-CONSUMER — main thread produces, workers consume
     template<class F>
     void enqueue(F&& f) {
         {
@@ -67,7 +62,6 @@ public:
         cv.notify_one();
     }
 
-    // Block until all submitted tasks are finished
     void waitAll() {
         while (true) {
             std::unique_lock<std::mutex> lock(q_mutex);
@@ -90,7 +84,6 @@ public:
         cv.notify_all();
         for (auto& w : workers)
             if (w.joinable()) w.join();
-        std::cout << "[THREAD POOL] Shutdown complete\n";
     }
 };
 

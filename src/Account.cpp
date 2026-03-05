@@ -1,7 +1,5 @@
 #include "Account.h"
-#include <thread>
 
-// Matches flag in Transaction.cpp
 extern bool DB_LOGGING_ENABLED;
 
 Account::Account(long id,
@@ -12,7 +10,7 @@ Account::Account(long id,
     : id(id), account_number(acc_num), type(t),
       balance(initial_balance), pool(p) {
 
-    // Startup sync is always done (needed for persistence demo)
+    // Always sync with DB on startup
     auto conn = pool->acquire();
     if (!conn->accountExists(account_number)) {
         conn->createAccount(account_number, type, balance);
@@ -31,23 +29,18 @@ Account::Account(long id,
 }
 
 void Account::persistBalance() {
-    // Only persist when DB logging is enabled
+    // Only called when DB_LOGGING_ENABLED — synchronous, no threads
     if (!DB_LOGGING_ENABLED) return;
-
-    double current_balance = balance;
-    std::string acc = account_number;
-    std::thread([this, acc, current_balance]() {
-        try {
-            auto conn = pool->acquire();
-            conn->updateBalance(acc, current_balance);
-            pool->release(conn);
-        } catch (...) {}
-    }).detach();
+    try {
+        auto conn = pool->acquire();
+        conn->updateBalance(account_number, balance);
+        pool->release(conn);
+    } catch (...) {}
 }
 
 bool Account::deposit(double amount) {
     if (amount <= 0) return false;
-    std::lock_guard<std::mutex> lock(acc_mutex);  // OS: MUTEX
+    std::lock_guard<std::mutex> lock(acc_mutex);
     balance += amount;
     persistBalance();
     return true;
@@ -55,7 +48,7 @@ bool Account::deposit(double amount) {
 
 bool Account::withdraw(double amount) {
     if (amount <= 0) return false;
-    std::lock_guard<std::mutex> lock(acc_mutex);  // OS: MUTEX
+    std::lock_guard<std::mutex> lock(acc_mutex);
     if (balance < amount) return false;
     balance -= amount;
     persistBalance();
