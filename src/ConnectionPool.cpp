@@ -16,19 +16,19 @@ ConnectionPool::ConnectionPool(const std::string& h, const std::string& u,
         if (db_conn->connect(host, user, password, database, port)) {
             all_connections.push_back(db_conn);
             available.push(db_conn);
-            std::cout << "[POOL] Connection " << (i+1) << " established ✓\n";
+            //std::cout << "[POOL] Connection " << (i+1) << " established ✓\n";
         } else {
             std::cerr << "[POOL] Failed to create connection " << (i+1) << "\n";
         }
     }
 
-    std::cout << "[POOL] Ready with " << available.size() << "/" << size
+    //std::cout << "[POOL] Ready with " << available.size() << "/" << size
               << " connections\n\n";
 }
 
 ConnectionPool::~ConnectionPool() {
     sem_destroy(&semaphore);
-    std::cout << "[POOL] Shutting down. Total acquired: " << total_acquired << "\n";
+    //std::cout << "[POOL] Shutting down. Total acquired: " << total_acquired << "\n";
 }
 
 std::shared_ptr<DatabaseManager> ConnectionPool::acquire() {
@@ -42,7 +42,7 @@ std::shared_ptr<DatabaseManager> ConnectionPool::acquire() {
     sem_getvalue(&semaphore, &sem_val);
     if (sem_val == 0) {
         times_blocked++;
-        std::cout << "[POOL] Thread blocked — waiting for free connection...\n";
+        //std::cout << "[POOL] Thread blocked — waiting for free connection...\n";
     }
 
     sem_wait(&semaphore);  // Block if no connections available
@@ -59,7 +59,7 @@ std::shared_ptr<DatabaseManager> ConnectionPool::acquire() {
     available.pop();
     total_acquired++;
 
-    std::cout << "[POOL] Connection acquired. Available: "
+    //std::cout << "[POOL] Connection acquired. Available: "
               << available.size() << "/" << pool_size << "\n";
 
     return conn;
@@ -77,7 +77,7 @@ void ConnectionPool::release(std::shared_ptr<DatabaseManager> conn) {
     // Increment semaphore → wake up one blocked thread
     sem_post(&semaphore);
 
-    std::cout << "[POOL] Connection released. Available: "
+    //std::cout << "[POOL] Connection released. Available: "
               << available.size() << "/" << pool_size << "\n";
 }
 

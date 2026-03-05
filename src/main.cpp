@@ -172,7 +172,7 @@ void demoDeadlock(std::vector<std::shared_ptr<Account>>& accounts,
     ThreadPool tp(4);
     g_success = 0; g_failed = 0;
 
-    for (int i = 0; i < 60; i++) {
+    for (int i = 0; i < 10; i++) {
         if (i % 2 == 0) {
             tp.enqueue([&]() {
                 Transaction t(i, TxType::TRANSFER, accounts[0], accounts[1], 100.0, &pool);
@@ -216,7 +216,7 @@ void demoMutex(std::vector<std::shared_ptr<Account>>& accounts,
     ThreadPool tp(8);
     std::atomic<int> done{0};
 
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < 10; i++) {
         tp.enqueue([&]() {
             Transaction t(i, TxType::DEPOSIT, nullptr, accounts[2], 10.0, &pool);
             t.execute();
@@ -246,7 +246,7 @@ void demoStressTest(std::vector<std::shared_ptr<Account>>& accounts,
                     ConnectionPool& pool) {
     printSection("DEMO 5: FULL STRESS TEST  (200 transactions, live view)");
 
-    const int TOTAL = 200;
+    const int TOTAL = 20;
     g_success = 0; g_failed = 0;
     std::atomic<int> submitted{0};
 
