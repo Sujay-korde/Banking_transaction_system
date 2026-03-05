@@ -453,14 +453,11 @@ void printSummary(ConnectionPool& pool) {
 
     pool.printStats();
 
-    std::cout << "\n" << BOLD << YELLOW
-              << "  Week 3:
-  ✓ Producer-Consumer  — ATM/Mobile/Web produce, workers consume
-  ✓ Bounded Buffer     — fixed queue prevents memory overflow
-  ✓ Dual Semaphores    — empty_slots + full_slots coordination
-
-  Next → Week 4: Readers-Writers Problem\n"
-              << RESET << "\n";
+    std::cout << "\n  Week 3:\n";
+    std::cout << "  " << MAGENTA << "✓" << RESET << " Producer-Consumer  — ATM/Mobile/Web produce, workers consume\n";
+    std::cout << "  " << MAGENTA << "✓" << RESET << " Bounded Buffer     — fixed queue prevents memory overflow\n";
+    std::cout << "  " << MAGENTA << "✓" << RESET << " Dual Semaphores    — empty_slots + full_slots coordination\n";
+    std::cout << "\n" << BOLD << YELLOW << "  Next → Week 4: Readers-Writers Problem\n" << RESET << "\n";
 }
 
 // ─────────────────────────────────────────────────────────────
