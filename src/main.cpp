@@ -31,6 +31,7 @@
 #include "Transaction.h"
 #include "ThreadPool.h"
 #include "BoundedQueue.h"
+#include "ReadWriteLock.h"
 
 // ── Terminal colors ──────────────────────────────────────────
 #define RESET   "\033[0m"
@@ -61,7 +62,7 @@ void printHeader() {
     std::cout << CLEAR << BOLD << CYAN;
     std::cout << "╔══════════════════════════════════════════════════════════════╗\n";
     std::cout << "║        BANKING TRANSACTION PROCESSING SYSTEM                ║\n";
-    std::cout << "║        Week 1 + 2 + 3  |  11 OS Concepts                   ║\n";
+    std::cout << "║        Week 1 + 2 + 3 + 4  |  13 OS Concepts                   ║\n";
     std::cout << "╚══════════════════════════════════════════════════════════════╝\n";
     std::cout << RESET << "\n";
 }
@@ -351,9 +352,77 @@ void demoProducerConsumer(std::vector<std::shared_ptr<Account>>& accounts,
     std::cin.get();
 }
 
+
+// ─────────────────────────────────────────────────────────────
+//  DEMO 7 — Readers-Writers Problem (Week 4)
+// ─────────────────────────────────────────────────────────────
+void demoReadersWriters(std::vector<std::shared_ptr<Account>>& accounts) {
+    printSection("DEMO 6: READERS-WRITERS PROBLEM  (Week 4)");
+
+    std::cout << "\n  Scenario: Balance inquiry desk at peak hour\n";
+    std::cout << "  READERS : Multiple threads check balances simultaneously\n";
+    std::cout << "  WRITERS : Transfer thread needs exclusive access\n\n";
+    std::cout << "  Rule: Many readers OR one writer — never both\n\n";
+
+    ReadWriteLock rwl;
+    std::mutex print_m;
+
+    std::vector<double> balances(accounts.size());
+    for (int i = 0; i < (int)accounts.size(); i++)
+        balances[i] = accounts[i]->getBalance();
+
+    std::vector<std::thread> readers;
+    for (int r = 0; r < 6; r++) {
+        readers.emplace_back([&, r]() {
+            for (int iter = 0; iter < 3; iter++) {
+                { std::lock_guard<std::mutex> lk(print_m);
+                  std::cout << CYAN << "  [Reader-" << r << "] Acquiring read lock...\n" << RESET; }
+                ReadGuard rg(rwl);
+                { std::lock_guard<std::mutex> lk(print_m);
+                  std::cout << GREEN << "  [Reader-" << r << "] Reading (shared access OK)\n" << RESET; }
+                std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                double total = 0;
+                for (auto b : balances) total += b;
+                { std::lock_guard<std::mutex> lk(print_m);
+                  std::cout << "  [Reader-" << r << "] Total: $"
+                            << std::fixed << std::setprecision(2) << total << " — releasing\n"; }
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+        });
+    }
+
+    std::vector<std::thread> writers;
+    for (int w = 0; w < 2; w++) {
+        writers.emplace_back([&, w]() {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100 + w * 200));
+            { std::lock_guard<std::mutex> lk(print_m);
+              std::cout << YELLOW << "\n  [Writer-" << w << "] Requesting WRITE lock...\n" << RESET; }
+            WriteGuard wg(rwl);
+            { std::lock_guard<std::mutex> lk(print_m);
+              std::cout << RED << "  [Writer-" << w << "] EXCLUSIVE access — transferring $500\n" << RESET;
+              std::cout << "  [Writer-" << w << "] All readers BLOCKED\n"; }
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            balances[w] -= 500.0;
+            balances[(w+1) % balances.size()] += 500.0;
+            { std::lock_guard<std::mutex> lk(print_m);
+              std::cout << GREEN << "  [Writer-" << w << "] Done — releasing write lock\n\n" << RESET; }
+        });
+    }
+
+    for (auto& r : readers) r.join();
+    for (auto& w : writers) w.join();
+
+    rwl.printStats();
+    std::cout << GREEN << "\n  Readers-Writers complete!\n" << RESET;
+    std::cout << "  Multiple readers ran simultaneously\n";
+    std::cout << "  Writers got exclusive access — zero corruption\n";
+    std::cout << "\n  Press Enter to continue...";
+    std::cin.get();
+}
+
 void demoStressTest(std::vector<std::shared_ptr<Account>>& accounts,
                     ConnectionPool& pool) {
-    printSection("DEMO 6: FULL STRESS TEST  (200 transactions, live view)");
+    printSection("DEMO 7: FULL STRESS TEST  (200 transactions, live view)");
 
     const int TOTAL = 200;
     g_success = 0; g_failed = 0;
@@ -434,7 +503,7 @@ void demoStressTest(std::vector<std::shared_ptr<Account>>& accounts,
 //  SUMMARY
 // ─────────────────────────────────────────────────────────────
 void printSummary(ConnectionPool& pool) {
-    printSection("OS CONCEPTS SUMMARY  —  Week 1 + 2 + 3");
+    printSection("OS CONCEPTS SUMMARY  —  Week 1 + 2 + 3 + 4");
 
     std::cout << "\n  Week 1:\n";
     std::cout << "  " << GREEN << "✓" << RESET << " Threads            — " << 4 << " worker threads in ThreadPool\n";
@@ -449,7 +518,7 @@ void printSummary(ConnectionPool& pool) {
     std::cout << "  " << CYAN << "✓" << RESET << " IPC Foundation     — shared pool resource across threads\n";
     std::cout << "  " << CYAN << "✓" << RESET << " Persistence        — MySQL saves all state across restarts\n";
 
-    std::cout << "\n  " << BOLD << "Total: 11 OS concepts active\n" << RESET;
+    std::cout << "\n  " << BOLD << "Total: 13 OS concepts active\n" << RESET;
 
     pool.printStats();
 
@@ -457,7 +526,11 @@ void printSummary(ConnectionPool& pool) {
     std::cout << "  " << MAGENTA << "✓" << RESET << " Producer-Consumer  — ATM/Mobile/Web produce, workers consume\n";
     std::cout << "  " << MAGENTA << "✓" << RESET << " Bounded Buffer     — fixed queue prevents memory overflow\n";
     std::cout << "  " << MAGENTA << "✓" << RESET << " Dual Semaphores    — empty_slots + full_slots coordination\n";
-    std::cout << "\n" << BOLD << YELLOW << "  Next → Week 4: Readers-Writers Problem\n" << RESET << "\n";
+    std::cout << "\n  Week 4:\n";
+    std::cout << "  " << MAGENTA << "\u2714" << RESET << " Readers-Writers Lock - multiple readers OR one exclusive writer\n";
+    std::cout << "  " << MAGENTA << "\u2714" << RESET << " Read-Write Semaphore - write_sem blocks writers + coordinates readers\n";
+    std::cout << "  " << MAGENTA << "\u2714" << RESET << " Writer Priority      - writers wait for ALL readers to finish\n";
+    std::cout << "\n  ** Project COMPLETE! 13 OS Concepts demonstrated. **\n";
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -488,6 +561,7 @@ int main() {
     demoDeadlock(accounts, pool);
     demoMutex(accounts, pool);
     demoProducerConsumer(accounts, pool);
+    demoReadersWriters(accounts);
     demoStressTest(accounts, pool);
     printSummary(pool);
 
