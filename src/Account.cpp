@@ -1,6 +1,9 @@
 #include "Account.h"
 #include <thread>
 
+// Matches flag in Transaction.cpp
+extern bool DB_LOGGING_ENABLED;
+
 Account::Account(long id,
                  const std::string& acc_num,
                  const std::string& t,
@@ -9,7 +12,7 @@ Account::Account(long id,
     : id(id), account_number(acc_num), type(t),
       balance(initial_balance), pool(p) {
 
-    // Startup: this is synchronous (needed before program runs)
+    // Startup sync is always done (needed for persistence demo)
     auto conn = pool->acquire();
     if (!conn->accountExists(account_number)) {
         conn->createAccount(account_number, type, balance);
@@ -28,12 +31,11 @@ Account::Account(long id,
 }
 
 void Account::persistBalance() {
-    // OS CONCEPT: Async background thread for DB write
-    // Balance is already updated in memory (mutex protected).
-    // DB sync happens in background — doesn't slow down transaction.
+    // Only persist when DB logging is enabled
+    if (!DB_LOGGING_ENABLED) return;
+
     double current_balance = balance;
     std::string acc = account_number;
-
     std::thread([this, acc, current_balance]() {
         try {
             auto conn = pool->acquire();
@@ -45,35 +47,18 @@ void Account::persistBalance() {
 
 bool Account::deposit(double amount) {
     if (amount <= 0) return false;
-
     std::lock_guard<std::mutex> lock(acc_mutex);  // OS: MUTEX
     balance += amount;
-    persistBalance();                              // OS: async DB sync
-
-    std::cout << "[DEPOSIT]  " << account_number
-              << "  +" << std::fixed << std::setprecision(2) << amount
-              << "  =>  $" << balance << "  [DB SAVED]\n";
+    persistBalance();
     return true;
 }
 
 bool Account::withdraw(double amount) {
     if (amount <= 0) return false;
-
     std::lock_guard<std::mutex> lock(acc_mutex);  // OS: MUTEX
-
-    if (balance < amount) {
-        std::cout << "[WITHDRAW FAIL] " << account_number
-                  << " needs $" << amount
-                  << " but has $" << balance << "\n";
-        return false;
-    }
-
+    if (balance < amount) return false;
     balance -= amount;
-    persistBalance();                              // OS: async DB sync
-
-    std::cout << "[WITHDRAW] " << account_number
-              << "  -" << std::fixed << std::setprecision(2) << amount
-              << "  =>  $" << balance << "  [DB SAVED]\n";
+    persistBalance();
     return true;
 }
 

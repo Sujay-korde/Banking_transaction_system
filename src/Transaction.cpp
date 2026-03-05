@@ -2,6 +2,9 @@
 #include <iostream>
 #include <thread>
 
+// Global flag - set to false for fast demos, true for persistence demo
+bool DB_LOGGING_ENABLED = false;
+
 Transaction::Transaction(long id, TxType t,
                          std::shared_ptr<Account> f,
                          std::shared_ptr<Account> to_acc,
@@ -31,10 +34,9 @@ bool Transaction::execute() {
     auto start = std::chrono::high_resolution_clock::now();
     int tid = (int)(std::hash<std::thread::id>{}(
                     std::this_thread::get_id()) % 100000);
-
     bool ok = false;
 
-    // ── Execute transaction (fast, in-memory) ──
+    // ── Execute transaction (always fast, in-memory) ──
     switch (type) {
         case TxType::DEPOSIT:
             ok = to->deposit(amount);
@@ -45,6 +47,7 @@ bool Transaction::execute() {
             break;
 
         case TxType::TRANSFER:
+            // OS: DEADLOCK PREVENTION
             lockInOrder(from.get(), to.get());
             if (from->getBalance() >= amount) {
                 from->withdraw(amount);
@@ -57,34 +60,33 @@ bool Transaction::execute() {
 
     status = ok ? TxStatus::SUCCESS : TxStatus::FAILED;
 
-    auto end = std::chrono::high_resolution_clock::now();
-    int  ms  = (int)std::chrono::duration_cast<
-                    std::chrono::milliseconds>(end - start).count();
+    // ── DB logging only when enabled ──
+    // Disabled during speed demos, enabled for persistence demo
+    if (DB_LOGGING_ENABLED) {
+        auto end = std::chrono::high_resolution_clock::now();
+        int  ms  = (int)std::chrono::duration_cast<
+                        std::chrono::milliseconds>(end - start).count();
 
-    // ── OS CONCEPT: Background thread for DB logging ──
-    // Transaction completes instantly.
-    // DB write happens in a detached background thread.
-    // This is IPC / async I/O — core OS concept.
-    std::string from_acc = from ? from->getAccountNumber() : "";
-    std::string to_acc   = to   ? to->getAccountNumber()   : "";
-    std::string type_str = typeStr(type);
-    std::string status_str = ok ? "SUCCESS" : "FAILED";
-    double amt = amount;
+        std::string from_acc   = from ? from->getAccountNumber() : "";
+        std::string to_acc_str = to   ? to->getAccountNumber()   : "";
+        std::string type_str   = typeStr(type);
+        std::string status_str = ok ? "SUCCESS" : "FAILED";
+        double amt = amount;
+        bool ok_copy = ok;
 
-    std::thread([this, from_acc, to_acc, type_str, amt,
-                 status_str, tid, ms, ok]() {
-        try {
-            auto conn = pool->acquire();
-            long long lid = conn->logTransaction(
-                from_acc, to_acc, type_str, amt,
-                status_str, tid, ms
-            );
-            conn->logEvent(lid, ok ? "Completed" : "Failed");
-            pool->release(conn);
-        } catch (...) {
-            // DB log failure never blocks the transaction
-        }
-    }).detach();  // Fire and forget — doesn't block transaction thread
+        std::thread([this, from_acc, to_acc_str, type_str, amt,
+                     status_str, tid, ms, ok_copy]() {
+            try {
+                auto conn = pool->acquire();
+                long long lid = conn->logTransaction(
+                    from_acc, to_acc_str, type_str, amt,
+                    status_str, tid, ms
+                );
+                conn->logEvent(lid, ok_copy ? "Completed" : "Failed");
+                pool->release(conn);
+            } catch (...) {}
+        }).detach();
+    }
 
     return ok;
 }
