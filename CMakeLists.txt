@@ -1,29 +1,33 @@
-# Minimum CMake version required
 cmake_minimum_required(VERSION 3.10)
-
-# Project name
 project(BankingSystem)
 
-# Use C++17 standard (modern C++)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Find threading library (for pthread)
 find_package(Threads REQUIRED)
 
-# Create executable from all source files
+execute_process(
+    COMMAND mysql_config --cflags
+    OUTPUT_VARIABLE MYSQL_CFLAGS
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+execute_process(
+    COMMAND mysql_config --libs
+    OUTPUT_VARIABLE MYSQL_LIBS
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MYSQL_CFLAGS}")
+
 add_executable(banking_system
     src/main.cpp
     src/Account.cpp
     src/Transaction.cpp
     src/ThreadPool.cpp
+    src/ConnectionPool.cpp
+    src/DatabaseManager.cpp
+    src/BoundedQueue.cpp
 )
 
-# Link pthread library for threading support
-target_link_libraries(banking_system PRIVATE Threads::Threads)
-
-# Add include directories
 target_include_directories(banking_system PRIVATE ${CMAKE_SOURCE_DIR}/src)
-
-# Enable compiler warnings (helps catch errors)
-target_compile_options(banking_system PRIVATE -Wall -Wextra)
+target_link_libraries(banking_system PRIVATE Threads::Threads ${MYSQL_LIBS})

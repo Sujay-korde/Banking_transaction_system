@@ -1,6 +1,16 @@
 #ifndef THREADPOOL_H
 #define THREADPOOL_H
 
+/*
+ * ThreadPool — Week 1 + Week 2 + Week 3
+ *
+ * OS Concepts:
+ *   THREADS           — pool of worker threads
+ *   MUTEX             — protects task queue
+ *   CONDITION VARIABLE— workers sleep when idle, wake on new task
+ *   PROCESS SCHEDULING— FIFO distribution across workers
+ */
+
 #include <vector>
 #include <queue>
 #include <thread>
@@ -9,82 +19,72 @@
 #include <functional>
 #include <atomic>
 #include <iostream>
+#include <chrono>
 
 class ThreadPool {
 private:
     std::vector<std::thread> workers;
-    std::queue<std::function<void()>> task_queue;
-    std::mutex queue_mutex;
-    std::condition_variable condition;
-    std::atomic<bool> stop_flag;
-    std::atomic<int> active_threads;
+    std::queue<std::function<void()>> tasks;
+
+    std::mutex q_mutex;
+    std::condition_variable cv;
+    std::atomic<bool> stop{false};
+    std::atomic<int>  active{0};
     int num_threads;
 
 public:
-    ThreadPool(int threads = std::thread::hardware_concurrency())
-        : stop_flag(false), active_threads(0), num_threads(threads) {
-
-        std::cout << "[THREAD POOL] Starting with " << threads << " threads" << std::endl;
-
-        for (int i = 0; i < threads; ++i) {
-            workers.emplace_back([this, i] {
-                std::cout << "[WORKER-" << i << "] Started" << std::endl;
+    ThreadPool(int n = std::thread::hardware_concurrency()) : num_threads(n) {
+        for (int i = 0; i < n; i++) {
+            workers.emplace_back([this] {
                 while (true) {
                     std::function<void()> task;
                     {
-                        std::unique_lock<std::mutex> lock(queue_mutex);
-                        condition.wait(lock, [this] {
-                            return stop_flag.load() || !task_queue.empty();
-                        });
-                        if (stop_flag.load() && task_queue.empty()) {
-                            std::cout << "[WORKER-" << i << "] Shutting down" << std::endl;
-                            return;
-                        }
-                        if (!task_queue.empty()) {
-                            task = std::move(task_queue.front());
-                            task_queue.pop();
-                        }
+                        std::unique_lock<std::mutex> lock(q_mutex);
+                        cv.wait(lock, [this] { return stop || !tasks.empty(); });
+                        if (stop && tasks.empty()) return;
+                        task = std::move(tasks.front());
+                        tasks.pop();
                     }
-                    if (task) {
-                        active_threads++;
-                        task();
-                        active_threads--;
-                    }
+                    active++;
+                    task();
+                    active--;
                 }
             });
         }
-        std::cout << "[THREAD POOL] All workers ready" << std::endl;
     }
 
-    // Template defined HERE in header (not in .cpp) - this fixes your error
     template<class F>
-    void enqueue(F&& task) {
+    void enqueue(F&& f) {
         {
-            std::unique_lock<std::mutex> lock(queue_mutex);
-            task_queue.emplace(std::forward<F>(task));
-            std::cout << "[THREAD POOL] Task enqueued. Queue size: "
-                      << task_queue.size() << std::endl;
+            std::unique_lock<std::mutex> lock(q_mutex);
+            tasks.emplace(std::forward<F>(f));
         }
-        condition.notify_one();
+        cv.notify_one();
     }
 
-    void shutdown() {
-        stop_flag = true;
-        condition.notify_all();
-        for (auto& worker : workers) {
-            if (worker.joinable()) worker.join();
+    void waitAll() {
+        while (true) {
+            std::unique_lock<std::mutex> lock(q_mutex);
+            if (tasks.empty() && active == 0) break;
+            lock.unlock();
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
-        std::cout << "[THREAD POOL] Shutdown complete" << std::endl;
     }
 
-    int getActiveThreadCount() const { return active_threads.load(); }
-    int getTotalThreads() const { return num_threads; }
+    int getActive()  const { return active.load(); }
+    int getThreads() const { return num_threads; }
+
     int getQueueSize() {
-        std::lock_guard<std::mutex> lock(queue_mutex);
-        return task_queue.size();
+        std::lock_guard<std::mutex> lock(q_mutex);
+        return tasks.size();
     }
 
-    ~ThreadPool() { shutdown(); }
+    ~ThreadPool() {
+        stop = true;
+        cv.notify_all();
+        for (auto& w : workers)
+            if (w.joinable()) w.join();
+    }
 };
 
 #endif
