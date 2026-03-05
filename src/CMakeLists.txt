@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Threads REQUIRED)
 
+# MySQL flags — requires libmysqlclient-dev
 execute_process(
     COMMAND mysql_config --cflags
     OUTPUT_VARIABLE MYSQL_CFLAGS
@@ -24,8 +25,8 @@ add_executable(banking_system
     src/Account.cpp
     src/Transaction.cpp
     src/ThreadPool.cpp
-    src/ConnectionPool.cpp
     src/DatabaseManager.cpp
+    src/ConnectionPool.cpp
 )
 
 target_include_directories(banking_system PRIVATE ${CMAKE_SOURCE_DIR}/src)
